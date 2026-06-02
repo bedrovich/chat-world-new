@@ -26,9 +26,6 @@ dist-ssr
 .env
 build/
 
-# OS files
-.DS_Store
 Thumbs.db
 
-# Logs
-npm-debug.log*
+.idea/
