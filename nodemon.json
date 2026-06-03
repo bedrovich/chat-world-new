@@ -1,0 +1,5 @@
+{
+  "watch": ["server.js"],
+  "ignore": ["dist/*", "chat-history.json", "public/*", "node_modules/*"],
+  "ext": "js,json"
+}

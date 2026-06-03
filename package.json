@@ -1,0 +1,27 @@
+{
+  "name": "chat-world-new",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev:client": "vite",
+    "dev:server": "nodemon server.js",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server.js",
+    "start": "npm run build && npm run server"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "phaser": "^3.80.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "socket.io": "^4.7.2",
+    "socket.io-client": "^4.7.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^9.2.1",
+    "vite": "^5.0.0"
+  }
+}
