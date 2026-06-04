@@ -1,10 +1,5 @@
 import Phaser from 'phaser';
-
-const MAP = { w: 1600, h: 800 };
-const TV_POS = { x: 400, y: -80 };
-const TV_SIZE = { w: 500, h: 300 };
-const PET_BOX_POS = { x: 20, y: 600 };
-const PET_BOX_SIZE = { w: 160, h: 100 };
+import { MAP, TV_POS, TV_SIZE, PET_BOX_POS, PET_BOX_SIZE, PLAYER, PET, BUBBLE, MOVEMENT } from '../config';
 
 const tintedBodyCache = new Map();
 const tintedPetCache = new Map();
@@ -64,6 +59,8 @@ export default class WorldScene extends Phaser.Scene {
     this.pets = this.add.group();
     this.playerSprites = new Map();
     this.petSprites = new Map();
+    this.prevPetX = new Map(); // для отслеживания направления движения питомца
+    this.emojiOffsetX = new Map(); // ← добавь эту строку
 
     // Сетка
     const graphics = this.add.graphics();
@@ -74,7 +71,7 @@ export default class WorldScene extends Phaser.Scene {
 
     // Телевизор и коробка
     this.tvSprite = this.add.image(TV_POS.x, TV_POS.y, 'tv').setDisplaySize(TV_SIZE.w, TV_SIZE.h);
-this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInteractive();
+    this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInteractive();
     this.petBoxSprite = this.add.image(PET_BOX_POS.x, PET_BOX_POS.y, 'petbox').setDisplaySize(PET_BOX_SIZE.w, PET_BOX_SIZE.h);
     this.petBoxZone = this.add.zone(PET_BOX_POS.x, PET_BOX_POS.y, PET_BOX_SIZE.w, PET_BOX_SIZE.h).setInteractive();
 
@@ -114,16 +111,31 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
       }
     });
     this.socket.on('pets_update', (updated) => {
-      for (const [id, pet] of Object.entries(updated)) {
-        const petObj = this.petSprites.get(parseInt(id));
-        if (petObj) {
-          petObj.sprite.setPosition(pet.x, pet.y);
-          petObj.nameText.setPosition(pet.x, pet.y - 40);
-          if (pet.color) this.updatePetColor(petObj, pet.color);
-        } else this.addPet(pet);
-      }
-    });
-    this.socket.on('pet_created', (pet) => this.addPet(pet));
+  for (const [id, pet] of Object.entries(updated)) {
+    const petId = parseInt(id);
+    const petObj = this.petSprites.get(petId);
+    if (petObj) {
+      petObj.sprite.setPosition(pet.x, pet.y);
+      
+      // Определяем актуальное смещение эмодзи в зависимости от флипа
+      const isFlipped = petObj.sprite.flipX;
+      const currentOffsetX = isFlipped ? -PET.emojiOffsetX : PET.emojiOffsetX;
+      petObj.nameText.setPosition(pet.x, pet.y + PET.nameOffsetY);
+      petObj.emojiText.setPosition(pet.x + currentOffsetX, pet.y + PET.emojiOffsetY);
+      
+      // Сохраняем смещение для update()
+      this.emojiOffsetX.set(petId, currentOffsetX);
+      
+      if (pet.color) this.updatePetColor(petObj, pet.color);
+    } else {
+      this.addPet(pet);
+    }
+  }
+});
+    this.socket.on('pet_created', (pet) => {
+      this.addPet(pet);
+      this.emojiOffsetX.set(pet.id, PET.emojiOffsetX);
+  });
     this.socket.on('chatMessage', (msg) => {
       const player = this.playerSprites.get(msg.id);
       if (player) {
@@ -132,12 +144,11 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
     });
     
     this.socket.on('pet_speak', ({ petId, text }) => {
-  const pet = this.petSprites.get(petId);
-  if (pet) {
-    this.showBubble(pet.sprite, text, false);
-  }
-});
-    
+      const pet = this.petSprites.get(petId);
+      if (pet) {
+        this.showBubble(pet.sprite, text, false);
+      }
+    });
 
     this.keys = { w: false, a: false, s: false, d: false };
     const keyDownHandler = (e) => {
@@ -186,12 +197,12 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
         if (!meData) return;
         const me = meData.container;
         let dx = 0, dy = 0;
-        if (this.keys.w) dy -= 4;
-        if (this.keys.s) dy += 4;
-        if (this.keys.a) dx -= 4;
-        if (this.keys.d) dx += 4;
+        if (this.keys.w) dy -= MOVEMENT.speed;
+        if (this.keys.s) dy += MOVEMENT.speed;
+        if (this.keys.a) dx -= MOVEMENT.speed;
+        if (this.keys.d) dx += MOVEMENT.speed;
         if (dx !== 0 || dy !== 0) {
-          if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+          if (dx !== 0 && dy !== 0) { dx *= MOVEMENT.diagonalFactor; dy *= MOVEMENT.diagonalFactor; }
           const newX = Phaser.Math.Clamp(Math.round(me.x + dx), 20, MAP.w - 20);
           const newY = Phaser.Math.Clamp(Math.round(me.y + dy), 20, MAP.h - 20);
           me.setPosition(newX, newY);
@@ -226,12 +237,15 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
     const hexColor = colorToHex(p.color);
     const bodyTexture = this.getTintedTexture('body_orig', hexColor, '#ffffff', tintedBodyCache);
     const container = this.add.container(p.x, p.y);
-    const body = this.add.image(0, 8, bodyTexture).setDisplaySize(36, 48);
-    const head = this.add.image(0, -16, 'head').setDisplaySize(32, 32);
+    const body = this.add.image(0, PLAYER.bodyOffsetY, bodyTexture).setDisplaySize(PLAYER.bodySize.w, PLAYER.bodySize.h);
+    const head = this.add.image(0, PLAYER.headOffsetY, 'head').setDisplaySize(PLAYER.headSize.w, PLAYER.headSize.h);
     container.add([body, head]);
 
-    const nameText = this.add.text(0, -44, p.name, { fontSize: '14px', color: '#fff', fontStyle: 'bold', align: 'center' }).setOrigin(0.5);
-    const emojiText = this.add.text(0, -12, p.emoji || '😀', { fontSize: '20px', padding: { top: 4 } }).setOrigin(0.5);
+    const nameText = this.add.text(0, PLAYER.nameOffsetY, p.name, { fontSize: `${PLAYER.nameFontSize}px`, color: '#fff', fontStyle: 'bold', align: 'center' }).setOrigin(0.5);
+    const emojiText = this.add.text(0, PLAYER.emojiOffsetY, p.emoji || '😀', {
+  fontSize: `${PLAYER.emojiFontSize}px`,
+  padding: PLAYER.emojiPadding
+}).setOrigin(0.5)
     container.add([nameText, emojiText]);
 
     this.playerSprites.set(p.id, { container, nameText, emojiText, body, head });
@@ -246,17 +260,32 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
   }
 
   addPet(pet) {
-    if (this.petSprites.has(pet.id)) return;
+  if (this.petSprites.has(pet.id)) return;
 
-    const baseKey = pet.type === 'dog' ? 'dog_orig' : 'cat_orig';
-    const hexColor = colorToHex(pet.color || '#ffffff');
-    const petTexture = this.getTintedTexture(baseKey, hexColor, '#ffffff', tintedPetCache);
-    const sprite = this.add.image(pet.x, pet.y, petTexture).setDisplaySize(40, 48);
-    const nameText = this.add.text(pet.x, pet.y - 40, `${pet.gender} ${pet.name}`, { fontSize: '14px', color: '#fff' }).setOrigin(0.5);
-    this.petSprites.set(pet.id, { sprite, nameText });
-    this.pets.add(sprite);
-    this.pets.add(nameText);
-  }
+  const baseKey = pet.type === 'dog' ? 'dog_orig' : 'cat_orig';
+  const hexColor = colorToHex(pet.color || '#ffffff');
+  const petTexture = this.getTintedTexture(baseKey, hexColor, '#ffffff', tintedPetCache);
+  const sprite = this.add.image(pet.x, pet.y, petTexture).setDisplaySize(PET.spriteSize.w, PET.spriteSize.h);
+  const nameText = this.add.text(pet.x, pet.y + PET.nameOffsetY, `${pet.gender}${pet.name}`, {
+    fontSize: `${PET.nameFontSize}px`,
+    color: '#fff'
+  }).setOrigin(0.5);
+  
+  // Эмодзи — его смещение относительно спрайта (вправо, положительное)
+  const emojiText = this.add.text(pet.x + PET.emojiOffsetX, pet.y + PET.emojiOffsetY, pet.emoji || '😀', {
+    fontSize: `${PET.emojiFontSize}px`,
+    padding: PET.emojiPadding
+  }).setOrigin(0.5);
+  
+  this.petSprites.set(pet.id, { sprite, nameText, emojiText });
+  this.pets.add(sprite);
+  this.pets.add(nameText);
+  this.pets.add(emojiText);
+  
+  this.prevPetX.set(pet.id, pet.x);
+  // Сохраняем текущее состояние флипа и смещения для эмодзи
+  this.emojiOffsetX.set(pet.id, PET.emojiOffsetX);
+}
 
   updatePetColor(petData, newColor) {
     if (!petData.sprite) return;
@@ -266,20 +295,44 @@ this.tvZone = this.add.zone(TV_POS.x, TV_POS.y, TV_SIZE.w, TV_SIZE.h).setInterac
     if (newTexture) petData.sprite.setTexture(newTexture);
   }
 
-  showBubble(container, text, isMe) {
+  showBubble(target, text, isMe) {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${isMe ? 'me' : ''}`;
     bubble.textContent = text;
     document.getElementById('bubbles').appendChild(bubble);
-    const screenPos = this.cameras.main.worldToScreen(container.x, container.y);
+    const screenPos = this.cameras.main.worldToScreen(target.x, target.y);
     bubble.style.left = `${screenPos.x}px`;
-    bubble.style.top = `${screenPos.y - 60}px`;
-    setTimeout(() => { bubble.remove(); }, 3000);
+    bubble.style.top = `${screenPos.y + BUBBLE.offsetY}px`;
+    setTimeout(() => { bubble.remove(); }, BUBBLE.duration);
   }
 
   update() {
-    for (const [, { sprite, nameText }] of this.petSprites) {
-      nameText.setPosition(sprite.x, sprite.y - 24);
+  for (const [id, { sprite, nameText, emojiText }] of this.petSprites) {
+    // Имя всегда по центру, не флипается
+    nameText.setPosition(sprite.x, sprite.y + PET.nameOffsetY);
+    
+    // Эмодзи позиционируется с учётом текущего смещения
+    let currentOffsetX = this.emojiOffsetX.get(id) ?? PET.emojiOffsetX;
+    emojiText.setPosition(sprite.x + currentOffsetX, sprite.y + PET.emojiOffsetY);
+    
+    // Определяем направление движения, только если смещение значительное
+    const prevX = this.prevPetX.get(id) ?? sprite.x;
+    const deltaX = sprite.x - prevX;
+    const THRESHOLD = PET.flipThreshold; // минимальное движение для смены флипа
+    
+    if (Math.abs(deltaX) > THRESHOLD) {
+      const flip = deltaX < 0; // влево
+      sprite.setFlipX(flip);
+      emojiText.setFlipX(flip);
+      
+      const newOffsetX = flip ? -PET.emojiOffsetX : PET.emojiOffsetX;
+      // Обновляем смещение только если оно изменилось
+      if (currentOffsetX !== newOffsetX) {
+        this.emojiOffsetX.set(id, newOffsetX);
+        emojiText.setPosition(sprite.x + newOffsetX, sprite.y + PET.emojiOffsetY);
+      }
     }
+    this.prevPetX.set(id, sprite.x);
   }
+}
 }
